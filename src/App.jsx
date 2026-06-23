@@ -15,7 +15,12 @@ import {
 import stampComplete1 from './assets/stamp_complete1.png'; 
 import stampComplete2 from './assets/stamp_complete2.png'; 
 import stampComplete3 from './assets/stamp_complete3.png'; 
-import stampComplete4 from './assets/stamp_complete4.png'; 
+import stampComplete4 from './assets/stamp_complete4.png';
+import PageShell from './components/Layout/PageShell';
+import FestaHeader from './components/Layout/FestaHeader';
+import LoadingScreen from './components/Layout/LoadingScreen';
+import Toast from './components/Common/Toast';
+import ClaimedScreen from './features/reward/ClaimedScreen';
 
 const EMPTY_STAMPS = { 1: false, 2: false, 3: false, 4: false };
 
@@ -217,67 +222,24 @@ export default function App() {
   };
 
   if (loading) {
-    return (
-      <div className="max-w-md mx-auto min-h-dvh bg-[#FDFBF4] flex items-center justify-center">
-        <p className="text-amber-700/50 font-medium animate-pulse font-sans">Re-Feel Festa 연결 중...</p>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (isClaimed) {
     return (
-      <div className="max-w-md mx-auto min-h-dvh bg-slate-100 flex flex-col justify-between p-6 relative overflow-hidden select-none">
-        <div className="absolute inset-0 bg-black/5 pointer-events-none z-10" />
-        <div className="my-auto text-center z-20 flex flex-col items-center">
-          <h1 onClick={handleDeveloperReset} className="font-sinchon text-3xl text-slate-800 mb-8 tracking-wider cursor-pointer active:opacity-50">
-            Re-Feel Festa
-          </h1>
-          <div className="w-56 h-56 rounded-full border-4 border-purple-600 bg-white flex flex-col justify-center items-center p-4 shadow-2xl animate-bounce">
-            <span className="text-purple-600 font-bold text-2xl tracking-widest mb-1">체험완료</span>
-            <span className="text-purple-500 text-sm font-medium">수뭉이</span>
-          </div>
-          <p className="mt-8 text-lg font-bold text-slate-700">경품 수령이 완료된 기기입니다.</p>
-          <p className="text-sm text-slate-500 mt-2">중복 참여 및 화면 조작은 불가능합니다.</p>
-        </div>
-        <div className="bg-purple-600 text-white text-center py-3 rounded-xl font-mono tracking-widest shadow-md">
-          {currentTime} (캡처 사용 불가)
-        </div>
-      </div>
+      <ClaimedScreen
+        currentTime={currentTime}
+        onTitleClick={handleDeveloperReset}
+      />
     );
   }
 
   return (
-    <div className="max-w-md mx-auto h-dvh bg-[#FDFBF4] flex flex-col justify-between p-4 relative select-none shadow-2xl overflow-hidden text-slate-800">
-      
-      {/* 가랜드 장식 */}
-      <div className="absolute top-0 left-0 right-0 flex justify-center gap-1.5 pointer-events-none opacity-90 z-10">
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#ED7486]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#6FA3EF]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#F7CE65]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#69C99A]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#ED7486]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#6FA3EF]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#F7CE65]"></div>
-        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#69C99A]"></div>
-      </div>
-
-      <header className="text-center pt-5 pb-1 cursor-pointer z-20 flex flex-col items-center" onClick={handleDeveloperReset}>
-        <div className="bg-[#2C4073] text-white text-[9px] font-black px-2.5 py-0.5 rounded-sm mb-1.5 shadow-xs tracking-widest font-sans">
-          RE-FEEL FESTA
-        </div>
-        <h1 className="font-sinchon text-3xl text-[#20293A] tracking-wide leading-none flex flex-col items-center gap-0.5">
-          <span>Re-Feel Festa</span>
-          <span className="text-[#DE6273] text-4xl font-black tracking-widest">STAMP TOUR</span>
-        </h1>
-        
-        <div className="mt-2.5 relative flex items-center justify-center">
-          <div className="absolute -left-1.5 top-2 w-0 h-0 border-t-[6px] border-t-[#963744] border-l-[6px] border-l-transparent"></div>
-          <div className="bg-[#DE6273] text-white text-[11px] font-bold px-7 py-1.5 rounded-sm shadow-xs font-sans tracking-wide">
-            4개 스탬프를 모으면 경품을 드려요!
-          </div>
-          <div className="absolute -right-1.5 top-2 w-0 h-0 border-t-[6px] border-t-[#963744] border-r-[6px] border-r-transparent"></div>
-        </div>
-      </header>
+    <PageShell contentClassName="justify-between p-4 pb-3">
+      <FestaHeader
+        onTitleClick={handleDeveloperReset}
+        bannerText="4개 부스 중 3개 이상 모으면 경품을 드려요!"
+      />
 
       {/* 메인 부스판 그리드 */}
       <main className="grid grid-cols-2 gap-3.5 my-auto z-20 px-1">
@@ -285,10 +247,10 @@ export default function App() {
         {/* SECTION 1 */}
         <div className="bg-[#FFF2F4] border-2 border-dashed border-[#F3AFBC] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
           <div className="flex flex-col items-center text-center">
-            <svg className="w-7 h-7 text-[#DE6273] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
+            <svg className="w-7 h-7 text-festa-rose mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 3L2 12h3v8h14v-8h3L12 3zM12 3v17M5 12h14" />
             </svg>
-            <span className="text-[9px] font-black text-[#DE6273] tracking-wider font-sans">SECTION 1</span>
+            <span className="text-[9px] font-black text-festa-rose tracking-wider font-sans">SECTION 1</span>
             <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">감정 하나 볼펜 하나</span>
           </div>
           <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
@@ -372,8 +334,8 @@ export default function App() {
       {/* 하단 제어 바 */}
       <footer className="flex flex-col gap-2.5 pb-1.5 z-20 relative">
         <div className="bg-white border border-amber-200/40 rounded-xl p-2.5 flex justify-between items-center shadow-2xs overflow-hidden font-sans">
-          <div className="absolute left-0 top-[22%] w-1.5 h-3 bg-[#FDFBF4] rounded-r-full border-y border-r border-amber-200/40"></div>
-          <div className="absolute right-0 top-[22%] w-1.5 h-3 bg-[#FDFBF4] rounded-l-full border-y border-l border-amber-200/40"></div>
+          <div className="absolute left-0 top-[22%] w-1.5 h-3 bg-festa-cream rounded-r-full border-y border-r border-amber-200/40"></div>
+          <div className="absolute right-0 top-[22%] w-1.5 h-3 bg-festa-cream rounded-l-full border-y border-l border-amber-200/40"></div>
           
           <div className="flex items-center gap-1.5 pl-1.5">
             <span className="text-sm">🎉</span>
@@ -381,43 +343,36 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-2 pr-1.5">
-            <span className="text-xl font-black text-[#DE6273] font-mono">
+            <span className="text-xl font-black text-festa-rose font-mono">
               {acquiredCount} <span className="text-slate-300 text-xs font-normal">/ 4</span>
             </span>
           </div>
         </div>
 
         {isEligibleForGift ? (
-          <button onClick={() => setIsStaffModalOpen(true)} className="font-sinchon w-full bg-[#A93C4C] text-white font-bold py-3.5 rounded-full shadow-xs transition-all active:scale-98 text-center text-base animate-pulse tracking-wide">
+          <button onClick={() => setIsStaffModalOpen(true)} className="font-sinchon w-full bg-festa-roseDark text-white font-bold py-3.5 rounded-full shadow-xs transition-all active:scale-98 text-center text-base animate-pulse tracking-wide">
             경품 교환하기 (조건 충족)
           </button>
         ) : (
-          <button onClick={() => setIsGuideOpen(true)} className="font-sinchon w-full bg-[#2C4073] text-white font-bold py-3.5 rounded-full shadow-xs transition-all active:scale-98 text-center text-base tracking-wide">
+          <button onClick={() => setIsGuideOpen(true)} className="font-sinchon w-full bg-festa-navy text-white font-bold py-3.5 rounded-full shadow-xs transition-all active:scale-98 text-center text-base tracking-wide">
             참여 방법 안내
           </button>
         )}
       </footer>
 
-      {/* 토스트 알림 */}
-      {toastMessage && (
-        <div className="absolute top-4 left-4 right-4 z-[60] flex justify-center pointer-events-none font-sans">
-          <p className="bg-slate-800/90 text-white text-xs font-bold px-4 py-2.5 rounded-full shadow-lg">
-            {toastMessage}
-          </p>
-        </div>
-      )}
+      <Toast message={toastMessage} />
 
       {/* 실시간 축하 모달 */}
       {successModalSection && (
         <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-6 backdrop-blur-xs font-sans">
           <div className="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl text-center">
             <div className="text-4xl mb-2">🎉</div>
-            <h3 className="font-extrabold text-lg text-[#DE6273] mb-1">인증 성공!</h3>
+            <h3 className="font-extrabold text-lg text-festa-rose mb-1">인증 성공!</h3>
             <p className="text-sm text-slate-600 font-medium mb-5 leading-relaxed">
               <span className="font-bold text-slate-800">SECTION {successModalSection}</span> 부스 확인 완료!<br />
               도장이 성공적으로 찍혔습니다.
             </p>
-            <button onClick={() => setSuccessModalSection(null)} className="w-full bg-[#2C4073] text-white font-bold py-3 rounded-xl hover:bg-[#1E2E56] transition-colors shadow-sm text-sm">
+            <button onClick={() => setSuccessModalSection(null)} className="w-full bg-festa-navy text-white font-bold py-3 rounded-xl hover:bg-festa-navyDark transition-colors shadow-sm text-sm">
               확인 (도장 확인하기)
             </button>
           </div>
@@ -434,7 +389,7 @@ export default function App() {
               <li>각 부스에 비치된 고유 QR 코드를 스캔합니다.</li>
               <li>자동으로 해당 부스의 도장이 완료 이미지로 업데이트됩니다.</li>
             </ol>
-            <p className="text-[11px] text-rose-500 mt-3 text-center font-bold bg-rose-50 py-1.5 rounded-md">※ 4개 부스 중 3개 이상 모으면 선물을 드려요!</p>
+            <p className="text-[11px] text-festa-rose mt-3 text-center font-bold bg-rose-50 py-1.5 rounded-md">※ 4개 부스 중 3개 이상 모으면 선물을 드려요!</p>
             <button onClick={() => setIsGuideOpen(false)} className="w-full mt-4 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-lg text-xs">닫기</button>
           </div>
         </div>
@@ -447,15 +402,15 @@ export default function App() {
             <h3 className="font-bold text-sm text-slate-800 mb-0.5">스태프 확인 🔒</h3>
             <p className="text-[11px] text-slate-400 mb-3">경품 교환소 스태프 전용 암호를 입력하세요.</p>
             <form onSubmit={handleStaffVerify}>
-              <input type="password" maxLength={4} value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} placeholder="••••" className="w-full text-center text-lg font-bold tracking-widest border-2 border-slate-200 rounded-lg py-1.5 mb-3 focus:border-[#DE6273] outline-none" />
+              <input type="password" maxLength={4} value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} placeholder="••••" className="w-full text-center text-lg font-bold tracking-widest border-2 border-slate-200 rounded-lg py-1.5 mb-3 focus:border-festa-rose outline-none" />
               <div className="flex gap-2">
                 <button type="button" onClick={() => setIsStaffModalOpen(false)} className="w-1/2 bg-slate-100 text-slate-600 font-bold py-2 rounded-md text-xs">취소</button>
-                <button type="submit" className="w-1/2 bg-[#DE6273] text-white font-bold py-2 rounded-md text-xs">확인</button>
+                <button type="submit" className="w-1/2 bg-festa-rose text-white font-bold py-2 rounded-md text-xs">확인</button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 }
