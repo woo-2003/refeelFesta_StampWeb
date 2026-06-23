@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'SinchonRhapsody';
+  src: url('../assets/fonts/SinchonRhapsody.ttf') format('truetype');
+}
+
+body {
+  margin: 0;
+  background-color: #f1f5f9; /* 레이아웃을 돋보이게 할 은은한 배경색 */
+}
