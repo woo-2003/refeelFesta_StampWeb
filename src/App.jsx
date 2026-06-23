@@ -1,10 +1,68 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from './services/firebase';
-import { signInAnonymously } from 'firebase/auth';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { ensureAnonymousUser } from './services/auth';
+import { onAuthStateChanged } from 'firebase/auth';
+import {
+  doc,
+  setDoc,
+  getDoc,
+  onSnapshot,
+  runTransaction,
+  serverTimestamp,
+} from 'firebase/firestore';
+
+// 📂 섹션별 고유 완료 도장 이미지 4개 매핑
+import stampComplete1 from './assets/stamp_complete1.png'; 
+import stampComplete2 from './assets/stamp_complete2.png'; 
+import stampComplete3 from './assets/stamp_complete3.png'; 
+import stampComplete4 from './assets/stamp_complete4.png'; 
+
+const EMPTY_STAMPS = { 1: false, 2: false, 3: false, 4: false };
+
+function normalizeStamps(raw) {
+  if (!raw || typeof raw !== 'object') return { ...EMPTY_STAMPS };
+  return {
+    1: Boolean(raw[1] ?? raw['1']),
+    2: Boolean(raw[2] ?? raw['2']),
+    3: Boolean(raw[3] ?? raw['3']),
+    4: Boolean(raw[4] ?? raw['4']),
+  };
+}
+
+async function applyStamp(userDocRef, sectionId) {
+  return runTransaction(db, async (transaction) => {
+    const snap = await transaction.get(userDocRef);
+
+    if (snap.exists() && snap.data().isClaimed) {
+      return { applied: false, duplicate: false, claimed: true };
+    }
+
+    if (snap.exists()) {
+      const stamps = normalizeStamps(snap.data().stamps);
+      if (stamps[sectionId]) {
+        return { applied: false, duplicate: true, claimed: false };
+      }
+
+      // 기존 문서: 해당 칸만 점 표기법으로 갱신 (stamps 맵 전체 교체 금지)
+      transaction.update(userDocRef, {
+        [`stamps.${sectionId}`]: true,
+        updatedAt: serverTimestamp(),
+      });
+      return { applied: true, duplicate: false, claimed: false };
+    }
+
+    const initialStamps = { ...EMPTY_STAMPS };
+    initialStamps[sectionId] = true;
+    transaction.set(userDocRef, {
+      stamps: initialStamps,
+      isClaimed: false,
+      createdAt: serverTimestamp(),
+    });
+    return { applied: true, duplicate: false, claimed: false };
+  });
+}
 
 export default function App() {
-  // 1. 상태(State) 정의
   const [userId, setUserId] = useState(null);
   const [stamps, setStamps] = useState({ 1: false, 2: false, 3: false, 4: false });
   const [isClaimed, setIsClaimed] = useState(false);
@@ -14,9 +72,12 @@ export default function App() {
   const [staffPassword, setStaffPassword] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [tapCount, setTapCount] = useState(0);
-  const [loading, setLoading] = useState(true); // 서버 로딩 상태 관리
+  const [loading, setLoading] = useState(true);
+  const [successModalSection, setSuccessModalSection] = useState(null);
+  const [toastMessage, setToastMessage] = useState(null);
+  const stampPipelineRanRef = useRef(false);
+  const stampPipelineUserRef = useRef(null);
 
-  // 2. 어뷰징 방지용 실시간 시계 타이머
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date().toLocaleTimeString());
@@ -24,84 +85,125 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // 3. [핵심 관문] 구글 익명 로그인 및 파이어스토어 실시간 DB 구독 연동
+  // 🔐 [1단계] 익명 세션 복원 후에만 로그인 (QR 새 탭마다 UID가 바뀌는 문제 방지)
   useEffect(() => {
-    signInAnonymously(auth)
-      .then((cred) => {
-        const uid = cred.user.uid;
-        setUserId(uid);
+    let cancelled = false;
 
-        const userDocRef = doc(db, 'users', uid);
-        
-        // 데이터베이스 실시간 감시 (성공/실패 콜백을 모두 분리하여 무한 로딩 방지)
-        const unsubscribe = onSnapshot(
-          userDocRef, 
-          (docSnap) => {
-            if (docSnap.exists()) {
-              const data = docSnap.data();
-              if (data.stamps) setStamps(data.stamps);
-              if (data.isClaimed !== undefined) setIsClaimed(data.isClaimed);
-            } else {
-              // 서버에 문서가 없는 완전 최초 진입 유저인 경우 초기 틀 생성
-              setDoc(userDocRef, {
-                stamps: { 1: false, 2: false, 3: false, 4: false },
-                isClaimed: false,
-                createdAt: new Date()
-              }).catch(e => console.error("신규 유저 생성 실패:", e));
-            }
-            setLoading(false); // 데이터 로드 성공 시 로딩 해제
-          },
-          (error) => {
-            // Firestore 규칙 차단 등으로 에러 발생 시 무한 로딩을 풀고 로그 출력
-            console.error("🔴 파이어스토어 DB 연결 에러 발생:", error);
-            setLoading(false); 
-          }
-        );
-
-        return () => unsubscribe();
+    ensureAnonymousUser()
+      .then((user) => {
+        if (!cancelled) setUserId(user.uid);
       })
-      .catch((err) => {
-        console.error("🔴 구글 익명 로그인 자체 에러:", err);
-        setLoading(false);
-      });
+      .catch((e) => console.error('익명 로그인 에러:', e));
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) setUserId(user.uid);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribeAuth();
+    };
   }, []);
 
-  // 4. [자유 동선 QR] 주소창 파라미터(?section=n) 감지 및 서버 자동 적립
+  // 🔐 [2단계] 트랜잭션 기반 도장 적립 (레이스 컨디션·Strict Mode 이중 실행 방지)
   useEffect(() => {
-    if (!userId || isClaimed) return;
+    if (!userId) return;
 
-    const params = new URLSearchParams(window.location.search);
-    const sectionId = params.get('section');
+    const userDocRef = doc(db, 'users', userId);
 
-    if (sectionId && ['1', '2', '3', '4'].includes(sectionId)) {
-      const id = parseInt(sectionId, 10);
-      const userDocRef = doc(db, 'users', userId);
+    const handleStampPipeline = async () => {
+      if (stampPipelineUserRef.current !== userId) {
+        stampPipelineUserRef.current = userId;
+        stampPipelineRanRef.current = false;
+      }
 
-      // 기존 스탬프 상태를 복사하고 현재 QR 찍은 부스만 true로 병합
-      const updatedStamps = { ...stamps, [id]: true };
-      setDoc(userDocRef, { stamps: updatedStamps }, { merge: true })
-        .then(() => {
-          // 중복 알림 방지를 위해 주소창에서 ?section=n 파라미터 깔끔하게 제거
-          const newUrl = window.location.pathname;
-          window.history.replaceState({}, document.title, newUrl);
-          alert(`🎉 SECTION ${id} 부스 인증 완료! 도장이 찍혔습니다.`);
-        });
-    }
-  }, [userId, isClaimed, stamps]);
+      if (stampPipelineRanRef.current) return;
+      stampPipelineRanRef.current = true;
 
-  // 진행률 계산
+      // replaceState 전에 URL 파라미터를 동기적으로 캡처
+      const params = new URLSearchParams(window.location.search);
+      const sectionId = params.get('section');
+
+      if (sectionId && ['1', '2', '3', '4'].includes(sectionId)) {
+        const id = parseInt(sectionId, 10);
+
+        try {
+          const { applied, duplicate, claimed } = await applyStamp(userDocRef, id);
+
+          // Firestore 쓰기 성공 후에만 주소창 정리 (이중 실행 시 '일반 진입' 오판 방지)
+          window.history.replaceState({}, document.title, window.location.pathname);
+
+          if (claimed) return;
+          if (duplicate) {
+            setToastMessage('이미 완료된 부스입니다.');
+            return;
+          }
+          if (applied) {
+            setSuccessModalSection(id);
+          }
+        } catch (err) {
+          console.error('도장 적립 실패:', err);
+          setToastMessage('도장 적립에 실패했습니다. 네트워크를 확인해 주세요.');
+        }
+        return;
+      }
+
+      // QR 파라미터 없는 일반 진입: 빈 장부만 생성 (기존 도장 절대 덮어쓰지 않음)
+      try {
+        const docSnap = await getDoc(userDocRef);
+        if (!docSnap.exists()) {
+          await setDoc(userDocRef, {
+            stamps: { ...EMPTY_STAMPS },
+            isClaimed: false,
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (e) {
+        console.error('초기 장부 생성 실패:', e);
+      }
+    };
+
+    handleStampPipeline();
+
+    const unsubscribeSnap = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.stamps) setStamps(normalizeStamps(data.stamps));
+        if (data.isClaimed !== undefined) setIsClaimed(data.isClaimed);
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error('실시간 미러링 실패:', error);
+      setLoading(false);
+    });
+
+    return () => unsubscribeSnap();
+  }, [userId]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 3000);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
   const acquiredCount = Object.values(stamps).filter(Boolean).length;
   const isEligibleForGift = acquiredCount >= 3;
 
-  // 수동 스탬프 클릭 토글 (개발 및 현장 테스트 전용)
-  const toggleStamp = async (id) => {
-    if (!userId || isClaimed) return;
-    const userDocRef = doc(db, 'users', userId);
-    const updatedStamps = { ...stamps, [id]: !stamps[id] };
-    await setDoc(userDocRef, { stamps: updatedStamps }, { merge: true });
+  const handleDeveloperReset = async () => {
+    setTapCount((prev) => prev + 1);
+    if (tapCount + 1 >= 5) {
+      const password = prompt('관리자 디벨로퍼 비밀번호를 입력하세요.');
+      if (password === '9999') {
+        const userDocRef = doc(db, 'users', userId);
+        await setDoc(userDocRef, { stamps: { 1: false, 2: false, 3: false, 4: false }, isClaimed: false }, { merge: true });
+        setTapCount(0);
+        alert('초기화되었습니다.');
+      } else {
+        setTapCount(0);
+      }
+    }
   };
 
-  // 현장 스태프 경품 수령 확인 핸들러
   const handleStaffVerify = async (e) => {
     e.preventDefault();
     if (staffPassword === '2026') {
@@ -109,45 +211,19 @@ export default function App() {
       await setDoc(userDocRef, { isClaimed: true, claimedAt: new Date() }, { merge: true });
       setIsStaffModalOpen(false);
     } else {
-      alert('스태프 암호가 일치하지 않습니다. 다시 입력해주세요.');
+      alert('비밀번호가 틀렸습니다.');
     }
     setStaffPassword('');
   };
 
-  // 디벨로퍼 마스터 리셋 (타이틀 5번 터치 시 서버 데이터 포맷)
-  const handleDeveloperReset = async () => {
-    setTapCount((prev) => prev + 1);
-    if (tapCount + 1 >= 5) {
-      const password = prompt('관리자 디벨로퍼 비밀번호를 입력하세요.');
-      if (password === '9999') {
-        const userDocRef = doc(db, 'users', userId);
-        await setDoc(userDocRef, {
-          stamps: { 1: false, 2: false, 3: false, 4: false },
-          isClaimed: false
-        }, { merge: true });
-        setTapCount(0);
-        alert('서버 데이터베이스가 초기화되었습니다.');
-      } else {
-        alert('비밀번호가 일치하지 않습니다.');
-        setTapCount(0);
-      }
-    }
-  };
-
-  // ==========================================
-  // LOADING: 초기 서버 통신 중 스플래시 화면
-  // ==========================================
   if (loading) {
     return (
-      <div className="max-w-md mx-auto min-h-dvh bg-slate-50 flex items-center justify-center">
-        <p className="text-slate-400 font-medium animate-pulse">서버와 연결 중입니다...</p>
+      <div className="max-w-md mx-auto min-h-dvh bg-[#FDFBF4] flex items-center justify-center">
+        <p className="text-amber-700/50 font-medium animate-pulse font-sans">Re-Feel Festa 연결 중...</p>
       </div>
     );
   }
 
-  // ==========================================
-  // CASE A: 최종 경품 교환 완료 화면 (영구 잠금)
-  // ==========================================
   if (isClaimed) {
     return (
       <div className="max-w-md mx-auto min-h-dvh bg-slate-100 flex flex-col justify-between p-6 relative overflow-hidden select-none">
@@ -170,96 +246,211 @@ export default function App() {
     );
   }
 
-  // ==========================================
-  // CASE B: 일반 메인 스탬프 투어 판 화면
-  // ==========================================
   return (
-    <div className="max-w-md mx-auto min-h-dvh bg-slate-50 flex flex-col justify-between p-6 relative select-none shadow-2xl">
-      <header className="text-center pt-4 cursor-pointer" onClick={handleDeveloperReset}>
-        <h1 className="font-sinchon text-2xl text-slate-800 tracking-tight">
-          Re-Feel Festa Stamp Tour
+    <div className="max-w-md mx-auto h-dvh bg-[#FDFBF4] flex flex-col justify-between p-4 relative select-none shadow-2xl overflow-hidden text-slate-800">
+      
+      {/* 가랜드 장식 */}
+      <div className="absolute top-0 left-0 right-0 flex justify-center gap-1.5 pointer-events-none opacity-90 z-10">
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#ED7486]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#6FA3EF]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#F7CE65]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#69C99A]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#ED7486]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#6FA3EF]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#F7CE65]"></div>
+        <div className="w-0 h-0 border-l-[12px] border-l-transparent border-r-[12px] border-r-transparent border-t-[18px] border-t-[#69C99A]"></div>
+      </div>
+
+      <header className="text-center pt-5 pb-1 cursor-pointer z-20 flex flex-col items-center" onClick={handleDeveloperReset}>
+        <div className="bg-[#2C4073] text-white text-[9px] font-black px-2.5 py-0.5 rounded-sm mb-1.5 shadow-xs tracking-widest font-sans">
+          RE-FEEL FESTA
+        </div>
+        <h1 className="font-sinchon text-3xl text-[#20293A] tracking-wide leading-none flex flex-col items-center gap-0.5">
+          <span>Re-Feel Festa</span>
+          <span className="text-[#DE6273] text-4xl font-black tracking-widest">STAMP TOUR</span>
         </h1>
-        <p className="text-xs text-slate-400 mt-1">부스에서 QR을 찍으면 자동으로 도장이 찍혀요!</p>
+        
+        <div className="mt-2.5 relative flex items-center justify-center">
+          <div className="absolute -left-1.5 top-2 w-0 h-0 border-t-[6px] border-t-[#963744] border-l-[6px] border-l-transparent"></div>
+          <div className="bg-[#DE6273] text-white text-[11px] font-bold px-7 py-1.5 rounded-sm shadow-xs font-sans tracking-wide">
+            4개 스탬프를 모으면 경품을 드려요!
+          </div>
+          <div className="absolute -right-1.5 top-2 w-0 h-0 border-t-[6px] border-t-[#963744] border-r-[6px] border-r-transparent"></div>
+        </div>
       </header>
 
-      <main className="grid grid-cols-2 gap-4 my-auto">
-        <div onClick={() => toggleStamp(1)} className="aspect-square rounded-2xl p-4 flex flex-col justify-between items-center cursor-pointer transition-all active:scale-95 shadow-sm bg-brandPinkLight">
-          <span className="text-xs font-bold text-slate-500">SECTION 1</span>
-          <div className={`w-16 h-16 rounded-full border-2 border-dashed flex items-center justify-center ${stamps[1] ? 'bg-orange-400 border-none text-white font-bold' : 'border-slate-300'}`}>
-            {stamps[1] ? 'Stamp' : ''}
+      {/* 메인 부스판 그리드 */}
+      <main className="grid grid-cols-2 gap-3.5 my-auto z-20 px-1">
+        
+        {/* SECTION 1 */}
+        <div className="bg-[#FFF2F4] border-2 border-dashed border-[#F3AFBC] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
+          <div className="flex flex-col items-center text-center">
+            <svg className="w-7 h-7 text-[#DE6273] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3L2 12h3v8h14v-8h3L12 3zM12 3v17M5 12h14" />
+            </svg>
+            <span className="text-[9px] font-black text-[#DE6273] tracking-wider font-sans">SECTION 1</span>
+            <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">감정 하나 볼펜 하나</span>
           </div>
-          <span className="text-xs font-medium text-slate-700 text-center break-keep">감정 하나 볼펜 하나</span>
+          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+            {stamps[1] ? (
+              <img src={stampComplete1} alt="Complete 1" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+            ) : (
+              <div className="w-[72px] h-[72px] border-2 border-dashed border-[#F3AFBC] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#F3AFBC] tracking-tight leading-none bg-white/50">
+                <span>STAMP</span>
+                <span className="mt-0.5">HERE!</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div onClick={() => toggleStamp(2)} className="aspect-square rounded-2xl p-4 flex flex-col justify-between items-center cursor-pointer transition-all active:scale-95 shadow-sm bg-brandPink">
-          <span className="text-xs font-bold text-slate-600">SECTION 2</span>
-          <div className={`w-16 h-16 rounded-full border-2 border-dashed flex items-center justify-center ${stamps[2] ? 'bg-orange-400 border-none text-white font-bold' : 'border-slate-400'}`}>
-            {stamps[2] ? 'Stamp' : ''}
+        {/* SECTION 2 */}
+        <div className="bg-[#EFF5FF] border-2 border-dashed border-[#A5C8FF] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
+          <div className="flex flex-col items-center text-center">
+            <svg className="w-7 h-7 text-[#4D8BF5] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 7h3l1.5-2.5h5L16 7h3a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2z" />
+              <circle cx="12" cy="14" r="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[9px] font-black text-[#4D8BF5] tracking-wider font-sans">SECTION 2</span>
+            <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">나의 감정 트럭: Crush !</span>
           </div>
-          <span className="text-xs font-medium text-slate-800 text-center break-keep">나의 감정 트럭: Crush !</span>
+          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+            {stamps[2] ? (
+              <img src={stampComplete2} alt="Complete 2" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+            ) : (
+              <div className="w-[72px] h-[72px] border-2 border-dashed border-[#A5C8FF] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#4D8BF5] tracking-tight leading-none bg-white/50">
+                <span>STAMP</span>
+                <span className="mt-0.5">HERE!</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div onClick={() => toggleStamp(3)} className="aspect-square rounded-2xl p-4 flex flex-col justify-between items-center cursor-pointer transition-all active:scale-95 shadow-sm bg-brandBlueLight">
-          <span className="text-xs font-bold text-slate-500">SECTION 3</span>
-          <div className={`w-16 h-16 rounded-full border-2 border-dashed flex items-center justify-center ${stamps[3] ? 'bg-orange-400 border-none text-white font-bold' : 'border-slate-300'}`}>
-            {stamps[3] ? 'Stamp' : ''}
+        {/* SECTION 3 */}
+        <div className="bg-[#FFFCEB] border-2 border-dashed border-[#FAD875] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
+          <div className="flex flex-col items-center text-center">
+            <svg className="w-7 h-7 text-[#E5A91D] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
+            </svg>
+            <span className="text-[9px] font-black text-[#E5A91D] tracking-wider font-sans">SECTION 3</span>
+            <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">수뭉이의 행복 충전소</span>
           </div>
-          <span className="text-xs font-medium text-slate-700 text-center break-keep">수뭉이의 행복 충전소</span>
+          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+            {stamps[3] ? (
+              <img src={stampComplete3} alt="Complete 3" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+            ) : (
+              <div className="w-[72px] h-[72px] border-2 border-dashed border-[#FAD875] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#E5A91D] tracking-tight leading-none bg-white/50">
+                <span>STAMP</span>
+                <span className="mt-0.5">HERE!</span>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div onClick={() => toggleStamp(4)} className="aspect-square rounded-2xl p-4 flex flex-col justify-between items-center cursor-pointer transition-all active:scale-95 shadow-sm bg-brandBlue">
-          <span className="text-xs font-bold text-slate-600">SECTION 4</span>
-          <div className={`w-16 h-16 rounded-full border-2 border-dashed flex items-center justify-center ${stamps[4] ? 'bg-orange-400 border-none text-white font-bold' : 'border-slate-400'}`}>
-            {stamps[4] ? 'Stamp' : ''}
+        {/* SECTION 4 */}
+        <div className="bg-[#EFFFFA] border-2 border-dashed border-[#A2EAD2] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
+          <div className="flex flex-col items-center text-center">
+            <svg className="w-7 h-7 text-[#14B8A6] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-14 0M12 18v4M8 22h8M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" />
+            </svg>
+            <span className="text-[9px] font-black text-[#14B8A6] tracking-wider font-sans">SECTION 4</span>
+            <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">기록, 감정 보관소</span>
           </div>
-          <span className="text-xs font-medium text-slate-800 text-center break-keep">기록, 감정 보관소</span>
+          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+            {stamps[4] ? (
+              <img src={stampComplete4} alt="Complete 4" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+            ) : (
+              <div className="w-[72px] h-[72px] border-2 border-dashed border-[#A2EAD2] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#14B8A6] tracking-tight leading-none bg-white/40">
+                <span>STAMP</span>
+                <span className="mt-0.5">HERE!</span>
+              </div>
+            )}
+          </div>
         </div>
+
       </main>
 
-      <footer className="flex flex-col gap-4 pb-4">
-        <div className="flex justify-between items-center px-2">
-          <span className="text-sm font-medium text-slate-500">현재 진행률</span>
-          <span className="text-lg font-bold text-slate-800 font-mono">{acquiredCount} / 4</span>
+      {/* 하단 제어 바 */}
+      <footer className="flex flex-col gap-2.5 pb-1.5 z-20 relative">
+        <div className="bg-white border border-amber-200/40 rounded-xl p-2.5 flex justify-between items-center shadow-2xs overflow-hidden font-sans">
+          <div className="absolute left-0 top-[22%] w-1.5 h-3 bg-[#FDFBF4] rounded-r-full border-y border-r border-amber-200/40"></div>
+          <div className="absolute right-0 top-[22%] w-1.5 h-3 bg-[#FDFBF4] rounded-l-full border-y border-l border-amber-200/40"></div>
+          
+          <div className="flex items-center gap-1.5 pl-1.5">
+            <span className="text-sm">🎉</span>
+            <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider">현재 진행률</span>
+          </div>
+          
+          <div className="flex items-center gap-2 pr-1.5">
+            <span className="text-xl font-black text-[#DE6273] font-mono">
+              {acquiredCount} <span className="text-slate-300 text-xs font-normal">/ 4</span>
+            </span>
+          </div>
         </div>
 
         {isEligibleForGift ? (
-          <button onClick={() => setIsStaffModalOpen(true)} className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl shadow-lg transition-all active:scale-98 animate-pulse text-center">
+          <button onClick={() => setIsStaffModalOpen(true)} className="font-sinchon w-full bg-[#A93C4C] text-white font-bold py-3.5 rounded-full shadow-xs transition-all active:scale-98 text-center text-base animate-pulse tracking-wide">
             경품 교환하기 (조건 충족)
           </button>
         ) : (
-          <button onClick={() => setIsGuideOpen(true)} className="w-full bg-slate-800 text-white font-medium py-4 rounded-2xl shadow-md transition-all active:scale-98 text-center">
-            참여방법안내
+          <button onClick={() => setIsGuideOpen(true)} className="font-sinchon w-full bg-[#2C4073] text-white font-bold py-3.5 rounded-full shadow-xs transition-all active:scale-98 text-center text-base tracking-wide">
+            참여 방법 안내
           </button>
         )}
       </footer>
 
-      {isGuideOpen && (
-        <div className="absolute inset-0 bg-black/60 z-40 flex items-end justify-center p-6">
-          <div className="bg-white w-full rounded-t-3xl p-6 shadow-2xl">
-            <h3 className="font-bold text-lg text-slate-800 mb-4 text-center">스탬프 투어 참여 가이드</h3>
-            <ol className="space-y-3 text-sm text-slate-600 pl-2 list-decimal list-inside">
-              <li>스마트폰 기본 카메라 앱을 실행합니다.</li>
-              <li>각 부스에 비치된 고유 QR 코드를 스캔합니다.</li>
-              <li>자동으로 해당 부스의 도장이 쾅 찍힙니다.</li>
-            </ol>
-            <p className="text-xs text-red-400 mt-4 text-center font-medium">※ 4개 중 3개 이상 모으면 선물을 드려요!</p>
-            <button onClick={() => setIsGuideOpen(false)} className="w-full mt-6 bg-slate-100 text-slate-700 font-semibold py-3 rounded-xl hover:bg-slate-200 transition-colors">
-              닫기
+      {/* 토스트 알림 */}
+      {toastMessage && (
+        <div className="absolute top-4 left-4 right-4 z-[60] flex justify-center pointer-events-none font-sans">
+          <p className="bg-slate-800/90 text-white text-xs font-bold px-4 py-2.5 rounded-full shadow-lg">
+            {toastMessage}
+          </p>
+        </div>
+      )}
+
+      {/* 실시간 축하 모달 */}
+      {successModalSection && (
+        <div className="absolute inset-0 bg-black/50 z-50 flex items-center justify-center p-6 backdrop-blur-xs font-sans">
+          <div className="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl text-center">
+            <div className="text-4xl mb-2">🎉</div>
+            <h3 className="font-extrabold text-lg text-[#DE6273] mb-1">인증 성공!</h3>
+            <p className="text-sm text-slate-600 font-medium mb-5 leading-relaxed">
+              <span className="font-bold text-slate-800">SECTION {successModalSection}</span> 부스 확인 완료!<br />
+              도장이 성공적으로 찍혔습니다.
+            </p>
+            <button onClick={() => setSuccessModalSection(null)} className="w-full bg-[#2C4073] text-white font-bold py-3 rounded-xl hover:bg-[#1E2E56] transition-colors shadow-sm text-sm">
+              확인 (도장 확인하기)
             </button>
           </div>
         </div>
       )}
 
+      {/* 가이드 모달 */}
+      {isGuideOpen && (
+        <div className="absolute inset-0 bg-black/40 z-40 flex items-end justify-center p-4 backdrop-blur-3xs">
+          <div className="bg-white w-full rounded-t-2xl p-5 shadow-2xl font-sans">
+            <h3 className="font-extrabold text-base text-slate-800 mb-3 text-center">스탬프 투어 참여 가이드 📑</h3>
+            <ol className="space-y-2.5 text-xs text-slate-600 pl-1 list-decimal list-inside font-medium">
+              <li>스마트폰 기본 카메라 앱을 실행합니다.</li>
+              <li>각 부스에 비치된 고유 QR 코드를 스캔합니다.</li>
+              <li>자동으로 해당 부스의 도장이 완료 이미지로 업데이트됩니다.</li>
+            </ol>
+            <p className="text-[11px] text-rose-500 mt-3 text-center font-bold bg-rose-50 py-1.5 rounded-md">※ 4개 부스 중 3개 이상 모으면 선물을 드려요!</p>
+            <button onClick={() => setIsGuideOpen(false)} className="w-full mt-4 bg-slate-100 text-slate-700 font-bold py-2.5 rounded-lg text-xs">닫기</button>
+          </div>
+        </div>
+      )}
+
+      {/* 스태프 확인 모달 */}
       {isStaffModalOpen && (
-        <div className="absolute inset-0 bg-black/60 z-40 flex items-center justify-center p-6">
-          <div className="bg-white w-full max-w-xs rounded-2xl p-6 shadow-2xl text-center">
-            <h3 className="font-bold text-base text-slate-800 mb-2">스태프 확인</h3>
-            <p className="text-xs text-slate-400 mb-4">경품 교환소 스태프 전용 암호를 입력하세요.</p>
+        <div className="absolute inset-0 bg-black/40 z-40 flex items-center justify-center p-6 backdrop-blur-3xs">
+          <div className="bg-white w-full max-w-xs rounded-xl p-5 shadow-2xl text-center font-sans">
+            <h3 className="font-bold text-sm text-slate-800 mb-0.5">스태프 확인 🔒</h3>
+            <p className="text-[11px] text-slate-400 mb-3">경품 교환소 스태프 전용 암호를 입력하세요.</p>
             <form onSubmit={handleStaffVerify}>
-              <input type="password" maxLength={4} value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} placeholder="••••" className="w-full text-center text-xl font-bold tracking-widest border-2 border-slate-200 rounded-xl py-2 mb-4 focus:border-slate-400 outline-none" />
+              <input type="password" maxLength={4} value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} placeholder="••••" className="w-full text-center text-lg font-bold tracking-widest border-2 border-slate-200 rounded-lg py-1.5 mb-3 focus:border-[#DE6273] outline-none" />
               <div className="flex gap-2">
-                <button type="button" onClick={() => setIsStaffModalOpen(false)} className="w-1/2 bg-slate-100 text-slate-600 font-medium py-2 rounded-lg text-sm">취소</button>
-                <button type="submit" className="w-1/2 bg-red-500 text-white font-medium py-2 rounded-lg text-sm">확인</button>
+                <button type="button" onClick={() => setIsStaffModalOpen(false)} className="w-1/2 bg-slate-100 text-slate-600 font-bold py-2 rounded-md text-xs">취소</button>
+                <button type="submit" className="w-1/2 bg-[#DE6273] text-white font-bold py-2 rounded-md text-xs">확인</button>
               </div>
             </form>
           </div>
