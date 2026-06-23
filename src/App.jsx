@@ -1,60 +1,22 @@
 import React, { useState, useEffect } from 'react';
+import { auth, db } from './services/firebase';
+import { signInAnonymously } from 'firebase/auth';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 
 export default function App() {
-  // 1. 초기값 설정: 브라우저 창고(LocalStorage)에 저장된 데이터가 있으면 가져오고, 없으면 초기화합니다.
-  const [stamps, setStamps] = useState(() => {
-    const savedStamps = localStorage.getItem('refeel_stamps');
-    return savedStamps ? JSON.parse(savedStamps) : { 1: false, 2: false, 3: false, 4: false };
-  });
-
-  const [isClaimed, setIsClaimed] = useState(() => {
-    return localStorage.getItem('refeel_isClaimed') === 'true';
-  });
-
+  // 1. 상태(State) 정의
+  const [userId, setUserId] = useState(null);
+  const [stamps, setStamps] = useState({ 1: false, 2: false, 3: false, 4: false });
+  const [isClaimed, setIsClaimed] = useState(false);
+  
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
   const [staffPassword, setStaffPassword] = useState('');
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [tapCount, setTapCount] = useState(0);
+  const [loading, setLoading] = useState(true); // 서버 로딩 상태 관리
 
-  // 2. [핵심 기능] URL 주소창에서 ?section=번호 감지해서 자동 도장 찍기
-  useEffect(() => {
-    // 이미 경품을 수령한 기기라면 QR 코드 작동을 원천 차단
-    if (isClaimed) return;
-
-    const params = new URLSearchParams(window.location.search);
-    const sectionId = params.get('section'); // URL에서 'section' 파라미터 추출
-
-    // section 번호가 1, 2, 3, 4 중 하나인지 검증
-    if (sectionId && ['1', '2', '3', '4'].includes(sectionId)) {
-      const id = parseInt(sectionId, 10);
-      
-      setStamps((prev) => {
-        // 기존에 찍혀있던 도장 상태를 그대로 유지하면서, 새로 찍은 부스만 true로 변경 (순서 상관 없음)
-        const updated = { ...prev, [id]: true };
-        localStorage.setItem('refeel_stamps', JSON.stringify(updated)); // 창고에 영구 저장
-        return updated;
-      });
-
-      // 💡 깔끔한 처리를 위해 도장을 찍은 후 주소창 뒤의 ?section=n 문구를 깨끗하게 지워줍니다.
-      // (유저가 화면을 수동 새로고침했을 때 도장이 중복으로 찍히는 알림이나 이펙트 오작동 방지)
-      const newUrl = window.location.pathname;
-      window.history.replaceState({}, document.title, newUrl);
-      
-      alert(`🎉 SECTION ${id} 부스 인증 완료! 도장이 찍혔습니다.`);
-    }
-  }, [isClaimed]);
-
-  // 3. 상태가 바뀔 때마다 로컬 스토리지 동기화
-  useEffect(() => {
-    localStorage.setItem('refeel_stamps', JSON.stringify(stamps));
-  }, [stamps]);
-
-  useEffect(() => {
-    localStorage.setItem('refeel_isClaimed', isClaimed.toString());
-  }, [isClaimed]);
-
-  // 4. 어뷰징 방지용 실시간 타이머
+  // 2. 어뷰징 방지용 실시간 시계 타이머
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date().toLocaleTimeString());
@@ -62,35 +24,89 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // 5. 진행률 계산
+  // 3. [핵심 관문] 구글 익명 로그인 및 파이어스토어 실시간 DB 구독 연동
+  useEffect(() => {
+    signInAnonymously(auth)
+      .then((cred) => {
+        const uid = cred.user.uid;
+        setUserId(uid);
+
+        const userDocRef = doc(db, 'users', uid);
+        
+        // 데이터베이스 실시간 감시 (성공/실패 콜백을 모두 분리하여 무한 로딩 방지)
+        const unsubscribe = onSnapshot(
+          userDocRef, 
+          (docSnap) => {
+            if (docSnap.exists()) {
+              const data = docSnap.data();
+              if (data.stamps) setStamps(data.stamps);
+              if (data.isClaimed !== undefined) setIsClaimed(data.isClaimed);
+            } else {
+              // 서버에 문서가 없는 완전 최초 진입 유저인 경우 초기 틀 생성
+              setDoc(userDocRef, {
+                stamps: { 1: false, 2: false, 3: false, 4: false },
+                isClaimed: false,
+                createdAt: new Date()
+              }).catch(e => console.error("신규 유저 생성 실패:", e));
+            }
+            setLoading(false); // 데이터 로드 성공 시 로딩 해제
+          },
+          (error) => {
+            // Firestore 규칙 차단 등으로 에러 발생 시 무한 로딩을 풀고 로그 출력
+            console.error("🔴 파이어스토어 DB 연결 에러 발생:", error);
+            setLoading(false); 
+          }
+        );
+
+        return () => unsubscribe();
+      })
+      .catch((err) => {
+        console.error("🔴 구글 익명 로그인 자체 에러:", err);
+        setLoading(false);
+      });
+  }, []);
+
+  // 4. [자유 동선 QR] 주소창 파라미터(?section=n) 감지 및 서버 자동 적립
+  useEffect(() => {
+    if (!userId || isClaimed) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const sectionId = params.get('section');
+
+    if (sectionId && ['1', '2', '3', '4'].includes(sectionId)) {
+      const id = parseInt(sectionId, 10);
+      const userDocRef = doc(db, 'users', userId);
+
+      // 기존 스탬프 상태를 복사하고 현재 QR 찍은 부스만 true로 병합
+      const updatedStamps = { ...stamps, [id]: true };
+      setDoc(userDocRef, { stamps: updatedStamps }, { merge: true })
+        .then(() => {
+          // 중복 알림 방지를 위해 주소창에서 ?section=n 파라미터 깔끔하게 제거
+          const newUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, newUrl);
+          alert(`🎉 SECTION ${id} 부스 인증 완료! 도장이 찍혔습니다.`);
+        });
+    }
+  }, [userId, isClaimed, stamps]);
+
+  // 진행률 계산
   const acquiredCount = Object.values(stamps).filter(Boolean).length;
   const isEligibleForGift = acquiredCount >= 3;
 
-  // 6. 개발자 전용 마스터 초기화 리셋 기능 (타이틀 5번 터치)
-  const handleDeveloperReset = () => {
-    setTapCount((prev) => prev + 1);
-    if (tapCount + 1 >= 5) {
-      const password = prompt('관리자 디벨로퍼 비밀번호를 입력하세요.');
-      if (password === '9999') {
-        const resetStamps = { 1: false, 2: false, 3: false, 4: false };
-        setStamps(resetStamps);
-        setIsClaimed(false);
-        setTapCount(0);
-        localStorage.setItem('refeel_stamps', JSON.stringify(resetStamps));
-        localStorage.setItem('refeel_isClaimed', 'false');
-        alert('개발자 모드로 인해 기기의 모든 세션 창고 데이터가 포맷되었습니다.');
-      } else {
-        alert('비밀번호가 일치하지 않습니다.');
-        setTapCount(0);
-      }
-    }
+  // 수동 스탬프 클릭 토글 (개발 및 현장 테스트 전용)
+  const toggleStamp = async (id) => {
+    if (!userId || isClaimed) return;
+    const userDocRef = doc(db, 'users', userId);
+    const updatedStamps = { ...stamps, [id]: !stamps[id] };
+    await setDoc(userDocRef, { stamps: updatedStamps }, { merge: true });
   };
 
-  // 7. 스태프 패스워드 검증
-  const handleStaffVerify = (e) => {
+  // 현장 스태프 경품 수령 확인 핸들러
+  const handleStaffVerify = async (e) => {
     e.preventDefault();
     if (staffPassword === '2026') {
-      setIsClaimed(true);
+      const userDocRef = doc(db, 'users', userId);
+      await setDoc(userDocRef, { isClaimed: true, claimedAt: new Date() }, { merge: true });
       setIsStaffModalOpen(false);
     } else {
       alert('스태프 암호가 일치하지 않습니다. 다시 입력해주세요.');
@@ -98,11 +114,36 @@ export default function App() {
     setStaffPassword('');
   };
 
-  // 수동 클릭 도장 토글 (테스트용)
-  const toggleStamp = (id) => {
-    if (isClaimed) return;
-    setStamps((prev) => ({ ...prev, [id]: !prev[id] }));
+  // 디벨로퍼 마스터 리셋 (타이틀 5번 터치 시 서버 데이터 포맷)
+  const handleDeveloperReset = async () => {
+    setTapCount((prev) => prev + 1);
+    if (tapCount + 1 >= 5) {
+      const password = prompt('관리자 디벨로퍼 비밀번호를 입력하세요.');
+      if (password === '9999') {
+        const userDocRef = doc(db, 'users', userId);
+        await setDoc(userDocRef, {
+          stamps: { 1: false, 2: false, 3: false, 4: false },
+          isClaimed: false
+        }, { merge: true });
+        setTapCount(0);
+        alert('서버 데이터베이스가 초기화되었습니다.');
+      } else {
+        alert('비밀번호가 일치하지 않습니다.');
+        setTapCount(0);
+      }
+    }
   };
+
+  // ==========================================
+  // LOADING: 초기 서버 통신 중 스플래시 화면
+  // ==========================================
+  if (loading) {
+    return (
+      <div className="max-w-md mx-auto min-h-dvh bg-slate-50 flex items-center justify-center">
+        <p className="text-slate-400 font-medium animate-pulse">서버와 연결 중입니다...</p>
+      </div>
+    );
+  }
 
   // ==========================================
   // CASE A: 최종 경품 교환 완료 화면 (영구 잠금)
@@ -130,7 +171,7 @@ export default function App() {
   }
 
   // ==========================================
-  // CASE B: 일반 메인 스탬프 투어 화면
+  // CASE B: 일반 메인 스탬프 투어 판 화면
   // ==========================================
   return (
     <div className="max-w-md mx-auto min-h-dvh bg-slate-50 flex flex-col justify-between p-6 relative select-none shadow-2xl">
