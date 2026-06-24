@@ -17,6 +17,30 @@
 
 오프라인 팝업 현장에서 방문객이 **스마트폰 카메라로 QR을 스캔**하면 웹에서 스탬프가 자동 적립되고, **4부스 중 3개 이상** 수집 시 현장 스태프 인증 후 경품을 교환합니다. iOS 사파리의 **QR → 새 탭** 환경에서 발생한 세션 분리·데이터 덮어쓰기 버그를 해결하고, **Firestore 보안 규칙**까지 적용해 실서비스로 배포했습니다.
 
+> **핵심 해결 사례** — 연속 QR 스캔 시 스탬프가 사라지던 문제를 `authStateReady()` 세션 보장 + `runTransaction` 점 표기법 업데이트로 해결해, 동일 사용자 문서에 `{1:true, 2:true}`가 안정적으로 누적되도록 수정했습니다.
+
+---
+
+## 스크린샷
+
+### 핵심 플로우
+
+| QR 적립 성공 | 3/4 · 경품 버튼 활성화 | 스태프 인증 | 체험완료 잠금 |
+|:---:|:---:|:---:|:---:|
+| ![인증 성공](./docs/screenshots/04-stamp-success.png) | ![3개 적립](./docs/screenshots/05-main-eligible.png) | ![스태프 확인](./docs/screenshots/06-staff-verify.png) | ![체험완료](./docs/screenshots/07-claimed.png) |
+
+### 전체 화면
+
+| 로딩 | 메인 (0/4) | 참여 가이드 | QR 인증 성공 |
+|:---:|:---:|:---:|:---:|
+| ![로딩](./docs/screenshots/01-loading.png) | ![메인 초기](./docs/screenshots/02-main-empty.png) | ![참여 가이드](./docs/screenshots/03-guide-modal.png) | ![인증 성공](./docs/screenshots/04-stamp-success.png) |
+
+| 스탬프 3/4 | 스태프 인증 | 체험완료 |
+|:---:|:---:|:---:|
+| ![3개 적립](./docs/screenshots/05-main-eligible.png) | ![스태프 확인 모달](./docs/screenshots/06-staff-verify.png) | ![경품 수령 완료](./docs/screenshots/07-claimed.png) |
+
+*실제 iOS 사파리 · [refeel-festa-stampweb.web.app](https://refeel-festa-stampweb.web.app/) 캡처*
+
 ---
 
 ## 왜 이 프로젝트인가
