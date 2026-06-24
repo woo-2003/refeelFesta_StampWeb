@@ -1,0 +1,52 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function stampCount(stamps) {
+      return (stamps.get('1', false) == true ? 1 : 0)
+           + (stamps.get('2', false) == true ? 1 : 0)
+           + (stamps.get('3', false) == true ? 1 : 0)
+           + (stamps.get('4', false) == true ? 1 : 0);
+    }
+
+    function isFullReset(data) {
+      return data.isClaimed == false && stampCount(data.stamps) == 0;
+    }
+
+    // users/{익명 UID} — 본인 문서만 접근
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && request.resource.data.isClaimed == false;
+
+      allow update: if isOwner(userId) && (
+        // 개발자 리셋 (전체 초기화)
+        isFullReset(request.resource.data)
+        // 스탬프 적립 중 (아직 경품 미수령)
+        || (resource.data.isClaimed == false
+            && request.resource.data.isClaimed == false)
+        // 경품 수령: 스탬프 3개 이상일 때만 claimed 허용
+        || (resource.data.isClaimed == false
+            && request.resource.data.isClaimed == true
+            && stampCount(request.resource.data.stamps) >= 3)
+      );
+
+      allow delete: if false;
+    }
+
+    // (추후) 스태프 암호 등 운영 설정 — 읽기만 허용
+    match /config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+  }
+}

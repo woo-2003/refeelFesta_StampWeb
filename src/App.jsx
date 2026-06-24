@@ -16,13 +16,20 @@ import stampComplete1 from './assets/stamp_complete1.png';
 import stampComplete2 from './assets/stamp_complete2.png'; 
 import stampComplete3 from './assets/stamp_complete3.png'; 
 import stampComplete4 from './assets/stamp_complete4.png';
+import icon1 from './assets/icon1.png';
+import icon2 from './assets/icon2.png';
+import icon3 from './assets/icon3.png';
+import icon4 from './assets/icon4.png';
 import PageShell from './components/Layout/PageShell';
 import FestaHeader from './components/Layout/FestaHeader';
 import LoadingScreen from './components/Layout/LoadingScreen';
 import Toast from './components/Common/Toast';
+import SectionIcon from './components/Common/SectionIcon';
 import ClaimedScreen from './features/reward/ClaimedScreen';
 
 const EMPTY_STAMPS = { 1: false, 2: false, 3: false, 4: false };
+const STAFF_PASSWORD = import.meta.env.VITE_STAFF_PASSWORD ?? '';
+const DEV_RESET_PASSWORD = import.meta.env.VITE_DEV_RESET_PASSWORD ?? '';
 
 function normalizeStamps(raw) {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_STAMPS };
@@ -198,7 +205,7 @@ export default function App() {
     setTapCount((prev) => prev + 1);
     if (tapCount + 1 >= 5) {
       const password = prompt('관리자 디벨로퍼 비밀번호를 입력하세요.');
-      if (password === '9999') {
+      if (password === DEV_RESET_PASSWORD && DEV_RESET_PASSWORD) {
         const userDocRef = doc(db, 'users', userId);
         await setDoc(userDocRef, { stamps: { 1: false, 2: false, 3: false, 4: false }, isClaimed: false }, { merge: true });
         setTapCount(0);
@@ -211,7 +218,7 @@ export default function App() {
 
   const handleStaffVerify = async (e) => {
     e.preventDefault();
-    if (staffPassword === '2026') {
+    if (staffPassword === STAFF_PASSWORD && STAFF_PASSWORD) {
       const userDocRef = doc(db, 'users', userId);
       await setDoc(userDocRef, { isClaimed: true, claimedAt: new Date() }, { merge: true });
       setIsStaffModalOpen(false);
@@ -237,6 +244,7 @@ export default function App() {
   return (
     <PageShell contentClassName="justify-between p-4 pb-3">
       <FestaHeader
+        showLogo
         onTitleClick={handleDeveloperReset}
         bannerText="4개 부스 중 3개 이상 모으면 경품을 드려요!"
       />
@@ -247,15 +255,13 @@ export default function App() {
         {/* SECTION 1 */}
         <div className="bg-[#FFF2F4] border-2 border-dashed border-[#F3AFBC] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
           <div className="flex flex-col items-center text-center">
-            <svg className="w-7 h-7 text-festa-rose mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3L2 12h3v8h14v-8h3L12 3zM12 3v17M5 12h14" />
-            </svg>
+            <SectionIcon src={icon1} color="#DE6273" />
             <span className="text-[9px] font-black text-festa-rose tracking-wider font-sans">SECTION 1</span>
             <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">감정 하나 볼펜 하나</span>
           </div>
-          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+          <div className="flex items-center justify-center w-full h-[5.25rem]">
             {stamps[1] ? (
-              <img src={stampComplete1} alt="Complete 1" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+              <img src={stampComplete1} alt="Complete 1" className="w-[4.5rem] h-[4.5rem] object-contain" />
             ) : (
               <div className="w-[72px] h-[72px] border-2 border-dashed border-[#F3AFBC] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#F3AFBC] tracking-tight leading-none bg-white/50">
                 <span>STAMP</span>
@@ -268,16 +274,13 @@ export default function App() {
         {/* SECTION 2 */}
         <div className="bg-[#EFF5FF] border-2 border-dashed border-[#A5C8FF] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
           <div className="flex flex-col items-center text-center">
-            <svg className="w-7 h-7 text-[#4D8BF5] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 7h3l1.5-2.5h5L16 7h3a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V9a2 2 0 012-2z" />
-              <circle cx="12" cy="14" r="3" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <SectionIcon src={icon2} color="#4D8BF5" />
             <span className="text-[9px] font-black text-[#4D8BF5] tracking-wider font-sans">SECTION 2</span>
             <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">나의 감정 트럭: Crush !</span>
           </div>
-          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+          <div className="flex items-center justify-center w-full h-[5.25rem]">
             {stamps[2] ? (
-              <img src={stampComplete2} alt="Complete 2" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+              <img src={stampComplete2} alt="Complete 2" className="w-[4.5rem] h-[4.5rem] object-contain" />
             ) : (
               <div className="w-[72px] h-[72px] border-2 border-dashed border-[#A5C8FF] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#4D8BF5] tracking-tight leading-none bg-white/50">
                 <span>STAMP</span>
@@ -290,15 +293,13 @@ export default function App() {
         {/* SECTION 3 */}
         <div className="bg-[#FFFCEB] border-2 border-dashed border-[#FAD875] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
           <div className="flex flex-col items-center text-center">
-            <svg className="w-7 h-7 text-[#E5A91D] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" />
-            </svg>
+            <SectionIcon src={icon3} color="#E5A91D" />
             <span className="text-[9px] font-black text-[#E5A91D] tracking-wider font-sans">SECTION 3</span>
             <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">수뭉이의 행복 충전소</span>
           </div>
-          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+          <div className="flex items-center justify-center w-full h-[5.25rem]">
             {stamps[3] ? (
-              <img src={stampComplete3} alt="Complete 3" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+              <img src={stampComplete3} alt="Complete 3" className="w-[4.5rem] h-[4.5rem] object-contain" />
             ) : (
               <div className="w-[72px] h-[72px] border-2 border-dashed border-[#FAD875] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#E5A91D] tracking-tight leading-none bg-white/50">
                 <span>STAMP</span>
@@ -311,15 +312,13 @@ export default function App() {
         {/* SECTION 4 */}
         <div className="bg-[#EFFFFA] border-2 border-dashed border-[#A2EAD2] rounded-2xl p-2.5 flex flex-col justify-between items-center aspect-square shadow-2xs">
           <div className="flex flex-col items-center text-center">
-            <svg className="w-7 h-7 text-[#14B8A6] mb-0.5" fill="none" stroke="currentColor" strokeWidth="1.2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-14 0M12 18v4M8 22h8M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" />
-            </svg>
+            <SectionIcon src={icon4} color="#14B8A6" />
             <span className="text-[9px] font-black text-[#14B8A6] tracking-wider font-sans">SECTION 4</span>
             <span className="font-sinchon text-[13px] text-slate-700 mt-0.5">기록, 감정 보관소</span>
           </div>
-          <div className="w-20 h-20 flex items-center justify-center overflow-hidden">
+          <div className="flex items-center justify-center w-full h-[5.25rem]">
             {stamps[4] ? (
-              <img src={stampComplete4} alt="Complete 4" className="w-full h-full object-contain scale-110 transition-transform duration-300" />
+              <img src={stampComplete4} alt="Complete 4" className="w-[4.5rem] h-[4.5rem] object-contain" />
             ) : (
               <div className="w-[72px] h-[72px] border-2 border-dashed border-[#A2EAD2] rounded-full flex flex-col items-center justify-center text-[10px] font-black text-[#14B8A6] tracking-tight leading-none bg-white/40">
                 <span>STAMP</span>
