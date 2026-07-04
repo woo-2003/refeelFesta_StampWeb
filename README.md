@@ -7,17 +7,19 @@
 [![Firebase](https://img.shields.io/badge/Firebase-Hosting%20%2B%20Firestore-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)](https://firebase.google.com/)
 
 **배포** · [https://refeel-festa-stampweb.web.app/](https://refeel-festa-stampweb.web.app/)  
-**행사** · 리필페스타 팝업스토어 (상명대)  
-**역할** · 기획 연동 · 프론트엔드 · Firebase 연동 · 배포 · 현장 이슈 트러블슈팅  
-**Last updated** · 2026-06-24
+**행사** · 리필페스타 팝업스토어 (상명대) — **현장 실운영**  
+**역할** · 기획 연동 · 프론트엔드 · Firebase 연동 · 보안 규칙 · 배포 · 현장 장애 대응  
+**Last updated** · 2026-07-04
 
 ---
 
 ## 한 줄 요약
 
-오프라인 팝업 현장에서 방문객이 **스마트폰 카메라로 QR을 스캔**하면 웹에서 스탬프가 자동 적립되고, **4부스 중 3개 이상** 수집 시 현장 스태프 인증 후 경품을 교환합니다. iOS 사파리의 **QR → 새 탭** 환경에서 발생한 세션 분리·데이터 덮어쓰기 버그를 해결하고, **Firestore 보안 규칙**까지 적용해 실서비스로 배포했습니다.
+오프라인 팝업 현장에서 방문객이 **스마트폰 카메라로 QR을 스캔**하면 웹에서 스탬프가 자동 적립되고, **4부스 중 3개 이상** 수집 시 현장 스태프 인증 후 경품을 교환합니다. iOS 사파리의 **QR → 새 탭** 환경에서 발생한 세션 분리·도장 소실 버그를 해결해 **실제 행사 중 핫픽스 배포**까지 수행했습니다.
 
-> **핵심 해결 사례** — 연속 QR 스캔 시 스탬프가 사라지던 문제를 `authStateReady()` 세션 보장 + `runTransaction` 점 표기법 업데이트로 해결해, 동일 사용자 문서에 `{1:true, 2:true}`가 안정적으로 누적되도록 수정했습니다.
+> **핵심 해결 사례** — 연속 QR 스캔 시 이전 도장이 사라지던 문제를  
+> `authStateReady()` 세션 보장 + Firestore Transaction + **localStorage 도장 백업 병합**으로 해결했습니다.  
+> UID가 바뀌어도 같은 기기에서는 `{1:true, 2:true}`가 누적·복구됩니다.
 
 ---
 
@@ -49,19 +51,22 @@
 |-----------|------|
 | 앱 설치·회원가입 없이 즉시 참여 | Firebase Anonymous Auth |
 | QR 스캔 즉시 도장 반영 | `?section=1~4` + Firestore Transaction |
-| 여러 부스를 돌아도 도장 유지 | UID 세션 보장 + 점 표기법 업데이트 |
-| 경품 중복 수령 방지 | `isClaimed` 잠금 + 체험완료 전용 화면 |
-| 스태프 현장 대응 | 수동 URL 백업, 개발자 리셋(히든) |
+| 여러 부스를 돌아도 도장 유지 | UID 세션 보장 + 서버·로컬 도장 병합 |
+| 경품 중복 수령 방지 | `isClaimed` 잠금 + 실시간 시계 체험완료 화면 |
+| 스태프 현장 대응 | 수동 URL 백업, 스태프 가이드, 개발자 리셋 |
+
+포트폴리오에서 강조하는 포인트는 **기능 구현만이 아니라**, 모바일 브라우저 특성을 진단하고 **실서비스 장애를 핫픽스로 막은 경험**입니다.
 
 ---
 
 ## 성과
 
-- **프로덕션 배포** — Firebase Hosting SPA, 실제 행사 운영 가능 수준
-- **데이터 무결성** — 연속 QR 스캔 시 `{1:true, 2:true}` 누적 검증 (Firebase 콘솔 확인)
-- **실시간 UI** — `onSnapshot`으로 새로고침 없이 스탬프 카드 동기화
+- **현장 실운영** — 팝업스토어 행사 중 실제 방문객 트래픽으로 운영
+- **프로덕션 핫픽스** — 행사 중 “이전 도장 소실” 신고 접수 → 원인 분석 → 빌드·배포까지 즉시 대응
+- **데이터 무결성** — 연속 QR 스캔 시 `{1:true, 2:true}` 누적 (UID 분리 시에도 기기 백업으로 복구)
+- **실시간 UI** — Firestore `onSnapshot`으로 새로고침 없이 스탬프 카드 동기화
 - **보안 강화** — `allow read, write: if true` → 본인 문서 전용 규칙으로 교체·배포
-- **모바일 UX** — Scroll-Free 단일 뷰포트, 커스텀 모달/토스트 (`alert` 제거)
+- **운영 문서화** — 스태프 사용 설명서(`docs/STAFF_GUIDE.md`)로 현장 인수인계
 
 ---
 
@@ -73,6 +78,7 @@
 | Auth / DB | Firebase Anonymous Auth, Cloud Firestore |
 | Hosting | Firebase Hosting (SPA rewrite) |
 | Security | Firestore Security Rules (`firestore.rules`) |
+| Ops | `.env.local` 기반 운영 암호, 스태프 가이드 |
 | Tooling | ESLint, PostCSS |
 
 ---
@@ -80,13 +86,14 @@
 ## 주요 기능
 
 1. **익명 인증** — `authStateReady()` 후 세션 복원, 없을 때만 1회 로그인
-2. **QR 스탬프 적립** — `?section=1~4` 파라미터 → 트랜잭션 기반 도장 적립
-3. **실시간 스탬프 카드** — 4칸 원형 UI, 섹션별 브랜드 컬러·아이콘
-4. **경품 교환** — 3개 이상 수집 시 스태프 암호 인증 → `isClaimed` 잠금
-5. **체험완료 화면** — 실시간 시계, 스크린샷 재사용 어뷰징 완화
-6. **중복 스캔 안내** — 이미 완료된 부스 재스캔 시 토스트
-7. **스태프 백업** — QR 오류 시 `?section=N` URL 수동 안내 가능
-8. **개발자 리셋** — 체험완료 화면 타이틀 5회 탭 + 관리자 인증
+2. **QR 스탬프 적립** — `?section=1~4` → Transaction으로 도장 적립
+3. **도장 백업·병합** — `localStorage`에 적립 상태를 저장해 UID 분리 시에도 복구
+4. **실시간 스탬프 카드** — 4칸 UI, 섹션별 브랜드 컬러·아이콘
+5. **경품 교환** — 3개 이상 수집 시 스태프 암호 인증 → `isClaimed` 잠금
+6. **체험완료 화면** — 실시간 시계로 스크린샷 재사용 어뷰징 완화
+7. **중복 스캔 안내** — 이미 완료된 부스 재스캔 시 토스트
+8. **스태프 백업** — QR 오류 시 `?section=N` URL 수동 안내
+9. **개발자 리셋** — 타이틀 5회 탭 + 관리자 인증 (현장 테스트용)
 
 ---
 
@@ -99,8 +106,11 @@
 [ensureAnonymousUser]   authStateReady() → UID 재사용 또는 1회 익명 로그인
         │
         ▼
-[applyStamp]            runTransaction → stamps.N만 갱신 (맵 전체 교체 금지)
+[applyStamp]            runTransaction
+                        · Firestore stamps + localStorage 백업 병합
+                        · 이번 섹션 true 적립
         │
+        ├──────────────► localStorage (기기 단위 도장 백업)
         ▼
 [Cloud Firestore]  ──onSnapshot──►  [React UI]
         ▲
@@ -111,31 +121,34 @@
 
 ```
 src/
-├── App.jsx                         # 메인 UI · 스탬프 파이프라인 · 모달
+├── App.jsx                         # 메인 UI · 스탬프 파이프라인 · 로컬 백업 병합
 ├── services/
 │   ├── firebase.js                 # Firebase 초기화 (.env)
 │   └── auth.js                     # 익명 세션 보장 (authStateReady + 로그인 락)
 ├── components/
 │   ├── Common/
-│   │   ├── RibbonBanner.jsx        # 리본 배너
-│   │   ├── SectionIcon.jsx         # 섹션 아이콘 (CSS mask)
-│   │   └── Toast.jsx               # 토스트 알림
+│   │   ├── RibbonBanner.jsx
+│   │   ├── SectionIcon.jsx
+│   │   └── Toast.jsx
 │   └── Layout/
-│       ├── FestaHeader.jsx         # 헤더 · 로고 · 리본
-│       ├── Garland.jsx             # 가랜드 장식
-│       ├── LiveTimer.jsx           # 실시간 시계
-│       ├── LoadingScreen.jsx       # 로딩 화면
-│       └── PageShell.jsx           # 페이지 레이아웃 셸
+│       ├── FestaHeader.jsx
+│       ├── Garland.jsx
+│       ├── LiveTimer.jsx
+│       ├── LoadingScreen.jsx
+│       └── PageShell.jsx
 ├── features/
 │   └── reward/
-│       └── ClaimedScreen.jsx       # 경품 수령 완료 화면
+│       └── ClaimedScreen.jsx
 ├── styles/
-│   └── index.css                   # Tailwind · SinchonRhapsody 폰트
-└── assets/                         # 로고, 아이콘, 스탬프 완료 이미지
+│   └── index.css
+└── assets/
 
 firestore.rules                     # Firestore 보안 규칙
-firebase.json                       # Hosting + Firestore rules 설정
-docs/PRD.md                         # 기획 명세
+firebase.json                       # Hosting + rules 설정
+docs/
+├── PRD.md                          # 기획 명세
+├── STAFF_GUIDE.md                  # 현장 스태프 사용 설명서
+└── screenshots/                    # 포트폴리오 스크린샷
 ```
 
 ### Firestore 스키마
@@ -158,71 +171,56 @@ users/{uid}
 | 수령 후 | 스탬프 추가 차단 (개발자 전체 리셋만 예외) |
 | 삭제 | `users` 문서 삭제 불가 |
 
-> 팝업 이벤트 특성상 스태프 암호·URL 파라미터는 빌드 시 클라이언트에 포함되며, 암호 값은 `.env.local`로 관리합니다. DB 전체 공개 수준의 위험은 규칙 배포로 제거했습니다.
+> 스태프·개발자 암호는 `.env.local`로 관리하며 Git에 포함하지 않습니다.  
+> DB 전체 공개(`if true`) 수준의 위험은 규칙 배포로 제거했습니다.
 
 ---
 
-## Firebase 무료 요금 (Spark 플랜)
+## 트러블슈팅 (포트폴리오 핵심)
 
-행사 규모(팝업스토어·교내 축제)에서는 **기본 무료 요금으로 충분**한 경우가 대부분입니다.
-
-| 항목 | Spark(무료) 일일 한도 | 참가자 1명당 대략 |
-|------|----------------------|-------------------|
-| Firestore 읽기 | 50,000회 | 15~25회 (스냅샷·트랜잭션 포함) |
-| Firestore 쓰기 | 20,000회 | 5~8회 (스탬프·경품 완료) |
-| Anonymous Auth | 무제한 | 1회 |
-| Hosting 전송 | 360MB/일 | 정적 파일 수 MB 수준 |
-
-**대략적인 여유 인원** (하루 기준, 4부스 순회·경품 1회 가정)
-
-- 읽기 한도 → **약 2,000~3,000명** / 일
-- 쓰기 한도 → **약 2,500~4,000명** / 일
-
-상명대 팝업스토어 수준의 단기 행사라면 한도 초과 가능성은 **매우 낮습니다.**  
-다만 행사 전 Firebase 콘솔 → **Usage**에서 전일 사용량을 한 번 확인하고, 당일 방문객이 2,000명을 넘을 것 같으면 Blaze(종량제)로 전환해 두면 안심할 수 있습니다. Blaze도 무료 한도까지는 과금되지 않습니다.
-
----
-
-## 트러블슈팅
-
-### 연속 QR 스캔 시 이전 스탬프가 사라지는 문제
+### 1. 연속 QR 스캔 시 이전 스탬프가 사라지는 문제
 
 **증상**  
-섹션1 스캔 후 `{1: true}` → 섹션2 스캔 후 `{1: false, 2: true}`. UI에서도 도장 1이 사라짐.
+섹션1 스캔 후 `{1: true}` → 섹션2 스캔 후 `{1: false, 2: true}`. UI에서 도장 1이 사라짐.  
+**행사 당일**에도 동일 증상 신고가 들어와 핫픽스로 대응했습니다.
 
 **원인**
 
-1. **UID 파편화** — iOS 사파리는 QR마다 새 탭을 엽니다. 세션 복원 전 `signInAnonymously()`가 호출되면 **매 스캔마다 새 UID** 생성.
+1. **UID 파편화** — iOS 사파리는 QR마다 새 탭을 엽니다. 세션 복원 전 `signInAnonymously()`가 호출되면 **매 스캔마다 새 UID**가 생성되고, 새 `users/{uid}` 문서에는 이번 도장만 남습니다.
 2. **stamps 맵 전체 덮어쓰기** — 문서 없음으로 오판 시 `{1: false, 2: true, ...}` 형태로 전체 교체.
 3. **레이스 컨디션** — `replaceState`를 Firestore 쓰기 전에 실행하면 Strict Mode 이중 실행 시 빈 장부 `setDoc` 발생.
 
-**해결**
+**해결 (다층 방어)**
 
 ```js
-// auth.js — 세션 복원 대기 후 1회 로그인
+// 1) auth.js — 세션 복원 대기 후 1회만 로그인
 await auth.authStateReady();
 if (!auth.currentUser) await signInAnonymously(auth);
 
-// App.jsx — 해당 칸만 갱신
-transaction.update(userDocRef, {
-  [`stamps.${sectionId}`]: true,
-  updatedAt: serverTimestamp(),
-});
+// 2) App.jsx — 서버 stamps + localStorage 백업 병합 후 적립
+const before = mergeStamps(serverStamps, loadLocalStamps());
+const next = { ...before, [sectionId]: true };
+saveLocalStamps(next);
+transaction.update(userDocRef, { stamps: next, updatedAt: serverTimestamp() });
 ```
 
-- `runTransaction` + `stamps.${id}` 점 표기법
-- `useRef`로 스탬프 파이프라인 1회 실행 보장
-- `replaceState`를 Firestore 쓰기 **성공 후**로 이동
+| 레이어 | 역할 |
+|--------|------|
+| `authStateReady()` + 로그인 락 | 같은 브라우저에서 UID 재사용 |
+| `runTransaction` | 동시 쓰기·레이스 방지 |
+| `localStorage` 백업 병합 | UID가 바뀌어도 **같은 기기**에서 이전 도장 복구 |
+| `replaceState` 지연 | 쓰기 성공 후에만 URL 정리 |
 
-**결과** — 동일 UID에서 `{1: true, 2: true}` 누적, Firebase 콘솔 검증 완료.
+**결과** — 동일 UID에서는 정상 누적, UID가 분리돼도 기기 백업으로 `{1:true, 2:true}` 복구. 행사 중 핫픽스 배포 완료.
 
-### Firestore 보안 규칙 전면 개방
+### 2. Firestore 보안 규칙 전면 개방
 
 **증상** — 초기 규칙 `allow read, write: if true`로 누구나 전체 DB 접근 가능.
 
-**해결** — `firestore.rules` 작성 후 `firebase deploy --only firestore:rules` 배포. 앱 동작·현장 테스트 모두 정상 확인.
+**해결** — `firestore.rules` 작성 후 `firebase deploy --only firestore:rules` 배포.  
+본인 문서만 접근, 스탬프 3개 미만 `isClaimed` 차단.
 
-### 모바일 웹뷰 UX
+### 3. 모바일 웹뷰 UX
 
 브라우저 `alert()`는 웹뷰에서 메인 스레드를 블로킹할 수 있어, 성공 모달·토스트·스태프 인증 UI를 React 상태 기반으로 전환했습니다.
 
@@ -241,6 +239,21 @@ transaction.update(userDocRef, {
 | 2 | 나의 감정 트럭: Crush ! | `#ecc4cd` |
 | 3 | 수뭉이의 행복 충전소 | `#d7eef9` |
 | 4 | 기록, 감정 보관소 | `#b7d6f1` |
+
+---
+
+## Firebase 무료 요금 (Spark 플랜)
+
+팝업스토어·교내 축제 규모에서는 **기본 무료 요금으로 충분**한 경우가 대부분입니다.
+
+| 항목 | Spark(무료) 일일 한도 | 참가자 1명당 대략 |
+|------|----------------------|-------------------|
+| Firestore 읽기 | 50,000회 | 15~25회 |
+| Firestore 쓰기 | 20,000회 | 5~8회 |
+| Anonymous Auth | 무제한 | 1회 |
+| Hosting 전송 | 360MB/일 | 정적 파일 수 MB |
+
+하루 **약 2,000~3,000명** 수준까지 여유가 있습니다. 대규모가 예상되면 Blaze(종량제)로 전환해도 무료 한도까지는 과금되지 않습니다.
 
 ---
 
@@ -293,6 +306,8 @@ http://localhost:5173/?section=3
 http://localhost:5173/?section=4
 ```
 
+같은 브라우저에서 1 → 2 순서로 열어 **두 도장이 모두 유지**되는지 확인합니다.
+
 ---
 
 ## 배포
@@ -300,8 +315,8 @@ http://localhost:5173/?section=4
 ```bash
 npm run build
 firebase deploy --only hosting
-firebase deploy --only firestore:rules   # 보안 규칙 (최초 1회 또는 규칙 변경 시)
-# 또는 한 번에
+firebase deploy --only firestore:rules
+# 또는
 firebase deploy
 ```
 
@@ -312,7 +327,7 @@ firebase deploy
 ## 관련 문서
 
 - [docs/PRD.md](./docs/PRD.md) — 기획 명세, 부스 구성, 예외 처리 가이드
-- [docs/STAFF_GUIDE.md](./docs/STAFF_GUIDE.md) — **현장 스태프·경품 교환 담당자 사용 설명서**
+- [docs/STAFF_GUIDE.md](./docs/STAFF_GUIDE.md) — 현장 스태프·경품 교환 담당자 사용 설명서
 
 ---
 
