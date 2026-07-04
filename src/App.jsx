@@ -28,8 +28,9 @@ import SectionIcon from './components/Common/SectionIcon';
 import ClaimedScreen from './features/reward/ClaimedScreen';
 
 const EMPTY_STAMPS = { 1: false, 2: false, 3: false, 4: false };
-const STAFF_PASSWORD = import.meta.env.VITE_STAFF_PASSWORD ?? '';
-const DEV_RESET_PASSWORD = import.meta.env.VITE_DEV_RESET_PASSWORD ?? '';
+const STAFF_PASSWORD = import.meta.env.VITE_STAFF_PASSWORD || '2026';
+const DEV_RESET_PASSWORD = import.meta.env.VITE_DEV_RESET_PASSWORD || '9999';
+const LOCAL_STAMPS_KEY = 'refeel_festa_stamps_backup';
 
 function normalizeStamps(raw) {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_STAMPS };
@@ -41,35 +42,82 @@ function normalizeStamps(raw) {
   };
 }
 
+/** 서버·로컬 백업 중 true인 칸을 합칩니다. (QR 새 탭 UID 분리 시 도장 복구용) */
+function mergeStamps(...sources) {
+  const merged = { ...EMPTY_STAMPS };
+  for (const src of sources) {
+    if (!src) continue;
+    const n = normalizeStamps(src);
+    merged[1] = merged[1] || n[1];
+    merged[2] = merged[2] || n[2];
+    merged[3] = merged[3] || n[3];
+    merged[4] = merged[4] || n[4];
+  }
+  return merged;
+}
+
+function loadLocalStamps() {
+  try {
+    const raw = localStorage.getItem(LOCAL_STAMPS_KEY);
+    return raw ? normalizeStamps(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalStamps(stamps) {
+  try {
+    localStorage.setItem(LOCAL_STAMPS_KEY, JSON.stringify(normalizeStamps(stamps)));
+  } catch {
+    /* private mode 등 */
+  }
+}
+
+function stampsEqual(a, b) {
+  return a[1] === b[1] && a[2] === b[2] && a[3] === b[3] && a[4] === b[4];
+}
+
 async function applyStamp(userDocRef, sectionId) {
   return runTransaction(db, async (transaction) => {
     const snap = await transaction.get(userDocRef);
+    const local = loadLocalStamps();
 
     if (snap.exists() && snap.data().isClaimed) {
       return { applied: false, duplicate: false, claimed: true };
     }
 
-    if (snap.exists()) {
-      const stamps = normalizeStamps(snap.data().stamps);
-      if (stamps[sectionId]) {
-        return { applied: false, duplicate: true, claimed: false };
-      }
+    const serverStamps = snap.exists()
+      ? normalizeStamps(snap.data().stamps)
+      : { ...EMPTY_STAMPS };
 
-      // 기존 문서: 해당 칸만 점 표기법으로 갱신 (stamps 맵 전체 교체 금지)
-      transaction.update(userDocRef, {
-        [`stamps.${sectionId}`]: true,
-        updatedAt: serverTimestamp(),
-      });
-      return { applied: true, duplicate: false, claimed: false };
+    // 서버 + 기기 로컬 백업 병합 후 이번 섹션 적립 (UID가 바뀌어도 이전 도장 유지)
+    const before = mergeStamps(serverStamps, local);
+    if (before[sectionId]) {
+      saveLocalStamps(before);
+      if (snap.exists() && !stampsEqual(serverStamps, before)) {
+        transaction.update(userDocRef, {
+          stamps: before,
+          updatedAt: serverTimestamp(),
+        });
+      }
+      return { applied: false, duplicate: true, claimed: false };
     }
 
-    const initialStamps = { ...EMPTY_STAMPS };
-    initialStamps[sectionId] = true;
-    transaction.set(userDocRef, {
-      stamps: initialStamps,
-      isClaimed: false,
-      createdAt: serverTimestamp(),
-    });
+    const next = { ...before, [sectionId]: true };
+    saveLocalStamps(next);
+
+    if (snap.exists()) {
+      transaction.update(userDocRef, {
+        stamps: next,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      transaction.set(userDocRef, {
+        stamps: next,
+        isClaimed: false,
+        createdAt: serverTimestamp(),
+      });
+    }
     return { applied: true, duplicate: false, claimed: false };
   });
 }
@@ -160,15 +208,26 @@ export default function App() {
         return;
       }
 
-      // QR 파라미터 없는 일반 진입: 빈 장부만 생성 (기존 도장 절대 덮어쓰지 않음)
+      // QR 파라미터 없는 일반 진입: 빈 장부만 생성 (로컬 백업 도장은 복원)
       try {
         const docSnap = await getDoc(userDocRef);
+        const local = loadLocalStamps();
         if (!docSnap.exists()) {
           await setDoc(userDocRef, {
-            stamps: { ...EMPTY_STAMPS },
+            stamps: local ? mergeStamps(local) : { ...EMPTY_STAMPS },
             isClaimed: false,
             createdAt: serverTimestamp(),
           });
+        } else if (local) {
+          const serverStamps = normalizeStamps(docSnap.data().stamps);
+          const merged = mergeStamps(serverStamps, local);
+          if (!stampsEqual(serverStamps, merged) && !docSnap.data().isClaimed) {
+            await setDoc(
+              userDocRef,
+              { stamps: merged, updatedAt: serverTimestamp() },
+              { merge: true },
+            );
+          }
         }
       } catch (e) {
         console.error('초기 장부 생성 실패:', e);
@@ -180,8 +239,16 @@ export default function App() {
     const unsubscribeSnap = onSnapshot(userDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        if (data.stamps) setStamps(normalizeStamps(data.stamps));
+        const serverStamps = data.stamps
+          ? normalizeStamps(data.stamps)
+          : { ...EMPTY_STAMPS };
+        const merged = mergeStamps(serverStamps, loadLocalStamps());
+        setStamps(merged);
+        saveLocalStamps(merged);
         if (data.isClaimed !== undefined) setIsClaimed(data.isClaimed);
+      } else {
+        const local = loadLocalStamps();
+        if (local) setStamps(local);
       }
       setLoading(false);
     }, (error) => {
@@ -208,6 +275,9 @@ export default function App() {
       if (password === DEV_RESET_PASSWORD && DEV_RESET_PASSWORD) {
         const userDocRef = doc(db, 'users', userId);
         await setDoc(userDocRef, { stamps: { 1: false, 2: false, 3: false, 4: false }, isClaimed: false }, { merge: true });
+        saveLocalStamps(EMPTY_STAMPS);
+        setStamps({ ...EMPTY_STAMPS });
+        setIsClaimed(false);
         setTapCount(0);
         alert('초기화되었습니다.');
       } else {
