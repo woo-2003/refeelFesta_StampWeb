@@ -28,8 +28,8 @@ import SectionIcon from './components/Common/SectionIcon';
 import ClaimedScreen from './features/reward/ClaimedScreen';
 
 const EMPTY_STAMPS = { 1: false, 2: false, 3: false, 4: false };
-const STAFF_PASSWORD = import.meta.env.VITE_STAFF_PASSWORD || '2026';
-const DEV_RESET_PASSWORD = import.meta.env.VITE_DEV_RESET_PASSWORD || '9999';
+const STAFF_PASSWORD = import.meta.env.VITE_STAFF_PASSWORD || '';
+const DEV_RESET_PASSWORD = import.meta.env.VITE_DEV_RESET_PASSWORD || '';
 const LOCAL_STAMPS_KEY = 'refeel_festa_stamps_backup';
 
 function normalizeStamps(raw) {
